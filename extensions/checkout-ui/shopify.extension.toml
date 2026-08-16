@@ -1,0 +1,15 @@
+api_version = "2025-01"
+
+[[extensions]]
+name = "MainMoney Checkout"
+handle = "mm-checkout-ui"
+type = "ui_extension"
+uid = "mm-checkout-ui"
+
+[[extensions.targeting]]
+module = "./src/Checkout.tsx"
+target = "purchase.checkout.block.render"
+
+[extensions.capabilities]
+api_access = true
+network_access = true
