@@ -1,0 +1,11 @@
+{
+  "name": "@mainmoney/shopify",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "typecheck": "node --check shopify.app.toml || true"
+  }
+}

@@ -1,0 +1,9 @@
+---
+description: Shopify app must use official Node and JS SDKs
+alwaysApply: true
+---
+
+# Shopify SDKs
+
+- App server: `@mainmoney/sdk`. UI extensions: `@mainmoney/js-*`.
+- No secrets in git. Do not reimplement aggregator HTTP.

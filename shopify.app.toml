@@ -1,0 +1,11 @@
+# Placeholder Shopify app config. Do not put client secrets in this file.
+name = "MainMoney"
+client_id = "replace-me"
+application_url = "https://example.invalid"
+embedded = true
+
+[access_scopes]
+scopes = ""
+
+[auth]
+redirect_urls = ["https://example.invalid/api/auth"]
