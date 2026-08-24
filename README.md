@@ -32,6 +32,10 @@ checkout extensibility can use the HMAC-signed `/pay` page.
 
 Do not put merchant API keys in the extension or theme JavaScript.
 
+## Examples
+
+Development-store seed scripts and a hosted `/pay` helper live in [examples/dev-store](examples/dev-store).
+
 ## License
 
 Copyright (c) 2026 MainMoney SARL. Licensed under the PolyForm Noncommercial

@@ -1,0 +1,12 @@
+{
+  "name": "mm-aggr-shopify-dev-store-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "seed": "node scripts/seed-products.mjs",
+    "pay-url": "node scripts/print-pay-url.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7"
+  }
+}
