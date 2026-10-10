@@ -41,13 +41,13 @@ async function dispatch(
     return client.amountLimits.list(query);
   }
   if (method === "POST" && route === "fees/simulate") {
-    return client.fees.simulate(body);
+    return client.fees.simulate(withoutBrowserFeeFields(body));
   }
   if (method === "GET" && route === "checkout-preferences") {
     return client.checkoutPreferences.get();
   }
   if (method === "POST" && route === "deposits") {
-    const payload: Record<string, unknown> = { ...body, reference: session.reference };
+    const payload: Record<string, unknown> = { ...withoutBrowserFeeFields(body), reference: session.reference };
     if (session.lockAmount && session.amount !== null) {
       payload.amount = session.amount;
     }
@@ -57,4 +57,10 @@ async function dispatch(
     return client.status.check(query.operation || "deposit", query.reference || session.reference);
   }
   throw new Error("Unknown merchant backend path");
+}
+
+/** Fees are merchant-controlled: the browser may not choose the merchant fee or who bears the fees. */
+function withoutBrowserFeeFields(body: Record<string, unknown>): Record<string, unknown> {
+  const { fees: _fees, fee_bearer: _feeBearer, ...rest } = body;
+  return rest;
 }

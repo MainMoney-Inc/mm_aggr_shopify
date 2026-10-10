@@ -105,41 +105,6 @@
     };
   }
 
-  // ../../sdks/javascript/packages/core/src/money.ts
-  function assertSameCurrency(left, right) {
-    if (left.currency !== right.currency) {
-      throw new CurrencyMismatchException(
-        `Cannot combine ${left.currency} with ${right.currency}`
-      );
-    }
-  }
-  function addMoney(left, right) {
-    assertSameCurrency(left, right);
-    return { amount: addDecimalStrings(left.amount, right.amount), currency: left.currency };
-  }
-  function addDecimalStrings(left, right) {
-    const [leftWhole, leftFrac = ""] = splitDecimal(left);
-    const [rightWhole, rightFrac = ""] = splitDecimal(right);
-    const scale = Math.max(leftFrac.length, rightFrac.length);
-    const leftValue = BigInt(leftWhole + leftFrac.padEnd(scale, "0"));
-    const rightValue = BigInt(rightWhole + rightFrac.padEnd(scale, "0"));
-    const sum = leftValue + rightValue;
-    const sign = sum < 0n ? "-" : "";
-    const digits = (sum < 0n ? -sum : sum).toString().padStart(scale + 1, "0");
-    if (scale === 0) {
-      return `${sign}${digits}`;
-    }
-    return `${sign}${digits.slice(0, -scale)}.${digits.slice(-scale)}`;
-  }
-  function splitDecimal(value) {
-    const trimmed = value.trim();
-    const negative = trimmed.startsWith("-");
-    const unsigned = negative ? trimmed.slice(1) : trimmed;
-    const [whole, frac = ""] = unsigned.split(".");
-    const normalizedWhole = `${negative ? "-" : ""}${whole === "" ? "0" : whole}`;
-    return [normalizedWhole, frac.replace(/[^0-9]/g, "")];
-  }
-
   // ../../sdks/javascript/packages/core/src/events.ts
   var Emitter = class {
     listeners = /* @__PURE__ */ new Map();
@@ -748,11 +713,13 @@
           state.error = void 0;
         }
       }
+      const fees = merchantFees();
       state.fees = await http.post(session.paths.feesSimulate, {
         provider_code: state.selectedProvider.code,
         operation_type: operation,
         amount: state.amount,
-        currency: state.currency
+        currency: state.currency,
+        ...fees !== "" ? { fees } : {}
       });
     };
     const prepare = async () => {
@@ -831,13 +798,12 @@
       notify();
       try {
         const reference = options.reference ?? crypto.randomUUID();
-        const createAmount = depositAmount();
         let created;
         if (state.operation === "deposit") {
           const payload = {
             provider_code: state.selectedProvider.code,
             reference,
-            amount: createAmount,
+            amount: state.amount,
             currency: state.currency,
             customer_phone: e164OrIdentifier()
           };
@@ -846,6 +812,10 @@
           }
           if (state.customerEmail !== "") {
             payload.customer_email = state.customerEmail;
+          }
+          const fees = merchantFees();
+          if (fees !== "") {
+            payload.fees = fees;
           }
           created = await http.post(session.paths.deposits, payload, {
             "Idempotency-Key": reference
@@ -895,18 +865,11 @@
         fail(error);
       }
     };
-    const depositAmount = () => {
+    const merchantFees = () => {
       if (state.operation !== "deposit") {
-        return state.amount;
+        return "";
       }
-      const base = state.feeBearer === "CUSTOMER" && state.fees?.total_to_pay !== void 0 ? Number(state.fees.total_to_pay).toFixed(2) : state.amount;
-      if (state.partnerFee === null) {
-        return base;
-      }
-      return addMoney(
-        { amount: base, currency: state.currency },
-        { amount: state.partnerFee.amount, currency: state.partnerFee.currency }
-      ).amount;
+      return state.partnerFee?.amount ?? options.fees ?? "";
     };
     const e164OrIdentifier = () => {
       const raw = state.identifier.trim();

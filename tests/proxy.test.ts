@@ -29,6 +29,26 @@ describe("handleProxy", () => {
     expect(client.countries.list).toHaveBeenCalled();
   });
 
+  it("does not let the browser set merchant fees or the fee bearer", async () => {
+    const client = mockClient();
+    const session = createCheckoutSession({ shop: "demo.myshopify.com", amount: "12.00", reference: "SH-2" });
+    await handleProxy(
+      client,
+      "POST",
+      "deposits",
+      {},
+      { amount: "12.00", currency: "USD", provider_code: "X", fees: "9.00", fee_bearer: "CUSTOMER" },
+      session,
+    );
+    const created = vi.mocked(client.deposits.create).mock.calls[0][0];
+    expect(created).not.toHaveProperty("fees");
+    expect(created).not.toHaveProperty("fee_bearer");
+    await handleProxy(client, "POST", "fees/simulate", {}, { amount: "12.00", fees: "9.00", fee_bearer: "CUSTOMER" }, session);
+    const simulated = vi.mocked(client.fees.simulate).mock.calls[0][0];
+    expect(simulated).not.toHaveProperty("fees");
+    expect(simulated).not.toHaveProperty("fee_bearer");
+  });
+
   it("locks deposit amount and reference", async () => {
     const client = mockClient();
     const session = createCheckoutSession({
