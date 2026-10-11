@@ -26,7 +26,7 @@ App Store submission.
 5. In the aggregator admin, set the merchant webhook URL to
    `https://your-app.example/webhooks/aggregator?shop=your-shop.myshopify.com`.
 
-The checkout UI extension imports `createCheckout` from `@mainmoney/js-checkout`
+The checkout UI extension imports `createCheckout` from `@mainmoneyapp/js-checkout`
 and calls this app’s `/payments` proxy (`DEFAULT_PATHS`). Stores without
 checkout extensibility can use the HMAC-signed `/pay` page.
 

@@ -9,7 +9,7 @@
     "verbatimModuleSyntax": true,
     "types": ["node"],
     "paths": {
-      "@mainmoney/sdk": ["../../sdks/nodejs/src/index.ts"]
+      "@mainmoneyapp/sdk": ["../../sdks/nodejs/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"]

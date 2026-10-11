@@ -11,7 +11,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@mainmoney/sdk": path.resolve(root, "../../sdks/nodejs/src/index.ts"),
+      "@mainmoneyapp/sdk": path.resolve(root, "../../sdks/nodejs/src/index.ts"),
     },
   },
 });

@@ -11,8 +11,8 @@ import {
 } from "@shopify/ui-extensions-react/checkout";
 import { useEffect, useState } from "react";
 
-import { createSession } from "@mainmoney/js-core";
-import { createCheckout, type Checkout, type CheckoutSnapshot } from "@mainmoney/js-checkout";
+import { createSession } from "@mainmoneyapp/js-core";
+import { createCheckout, type Checkout, type CheckoutSnapshot } from "@mainmoneyapp/js-checkout";
 
 export default reactExtension("purchase.checkout.block.render", () => <Extension />);
 

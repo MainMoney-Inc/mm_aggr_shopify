@@ -18,9 +18,9 @@ await esbuild.build({
   target: ["es2022"],
   loader: { ".png": "file" },
   alias: {
-    "@mainmoney/js-core": path.join(sdkRoot, "packages/core/src/index.ts"),
-    "@mainmoney/js-http": path.join(sdkRoot, "packages/http/src/index.ts"),
-    "@mainmoney/js-checkout": path.join(sdkRoot, "packages/checkout/src/index.ts"),
+    "@mainmoneyapp/js-core": path.join(sdkRoot, "packages/core/src/index.ts"),
+    "@mainmoneyapp/js-http": path.join(sdkRoot, "packages/http/src/index.ts"),
+    "@mainmoneyapp/js-checkout": path.join(sdkRoot, "packages/checkout/src/index.ts"),
   },
 });
 

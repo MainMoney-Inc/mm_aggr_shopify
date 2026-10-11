@@ -1,5 +1,5 @@
-import { createSession } from "@mainmoney/js-core";
-import { createCheckout, mountCheckout } from "@mainmoney/js-checkout";
+import { createSession } from "@mainmoneyapp/js-core";
+import { createCheckout, mountCheckout } from "@mainmoneyapp/js-checkout";
 
 type CheckoutBootConfig = {
   merchantBackendUrl: string;

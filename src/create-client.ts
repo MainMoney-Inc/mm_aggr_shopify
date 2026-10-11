@@ -1,4 +1,4 @@
-import { Client } from "@mainmoney/sdk";
+import { Client } from "@mainmoneyapp/sdk";
 
 import type { MerchantSdk, MerchantSettings } from "./types.js";
 

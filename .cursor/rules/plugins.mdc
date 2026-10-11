@@ -5,5 +5,5 @@ alwaysApply: true
 
 # Shopify SDKs
 
-- App server: `@mainmoney/sdk`. UI extensions: `@mainmoney/js-*`.
+- App server: `@mainmoneyapp/sdk`. UI extensions: `@mainmoneyapp/js-*`.
 - No secrets in git. Do not reimplement aggregator HTTP.
