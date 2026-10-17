@@ -7,6 +7,7 @@ import {
   TextField,
   reactExtension,
   useApi,
+  useEmail,
   useTotalAmount,
 } from "@shopify/ui-extensions-react/checkout";
 import { useEffect, useState } from "react";
@@ -19,6 +20,7 @@ export default reactExtension("purchase.checkout.block.render", () => <Extension
 function Extension() {
   const api = useApi();
   const total = useTotalAmount();
+  const email = useEmail();
   const [checkout, setCheckout] = useState<Checkout | null>(null);
   const [state, setState] = useState<CheckoutSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +40,7 @@ function Extension() {
             amount: total?.amount,
             currency: total?.currencyCode,
             lockAmount: true,
+            customerEmail: email,
           }),
         });
         const cfg = (await response.json()) as {
@@ -48,6 +51,8 @@ function Extension() {
           amount?: string;
           lockAmount?: boolean;
           reference?: string;
+          currency?: string | null;
+          customerEmail?: string | null;
         };
         if (cancelled) {
           return;
@@ -63,6 +68,9 @@ function Extension() {
           amount: String(total?.amount ?? cfg.amount ?? ""),
           lockAmount: true,
           reference: cfg.reference,
+          // The order currency: the widget only offers other currencies to pay in, through a quote.
+          currency: total?.currencyCode ?? cfg.currency ?? undefined,
+          customerEmail: email ?? cfg.customerEmail ?? undefined,
         });
         wizard.subscribe((next) => setState(next));
         await wizard.loadCountries();
@@ -76,7 +84,7 @@ function Extension() {
     return () => {
       cancelled = true;
     };
-  }, [api, total]);
+  }, [api, total, email]);
 
   if (error !== null) {
     return <Banner status="critical">{error}</Banner>;
@@ -143,6 +151,9 @@ function Extension() {
       ) : null}
       {state.step === "confirming" || state.step === "polling" ? <Text>Processing…</Text> : null}
       {state.step === "terminal" ? <Text>{state.status?.status ?? ""}</Text> : null}
+      {state.step === "terminal" && (state.status?.status ?? "").toUpperCase() !== "SUCCESS" ? (
+        <Button onPress={() => void checkout.retry()}>Retry</Button>
+      ) : null}
     </BlockStack>
   );
 }

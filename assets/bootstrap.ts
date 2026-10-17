@@ -10,6 +10,9 @@ type CheckoutBootConfig = {
   amount?: string | null;
   lockAmount?: boolean;
   reference?: string;
+  /** Currency of `amount` (the order's); never changed by the widget. */
+  currency?: string | null;
+  customerEmail?: string | null;
   targetId?: string;
   logoUrl?: string;
 };
@@ -37,9 +40,12 @@ async function mountOne(cfg: CheckoutBootConfig): Promise<void> {
     amount: cfg.amount ?? undefined,
     lockAmount: cfg.lockAmount === true,
     reference: cfg.reference,
+    currency: cfg.currency ?? undefined,
+    customerEmail: cfg.customerEmail ?? undefined,
   });
-  await checkout.loadCountries();
+  // Mount first so the form shows while countries load.
   mountCheckout(root, checkout, cfg.logoUrl !== undefined ? { logoUrl: cfg.logoUrl } : {});
+  await checkout.loadCountries();
 }
 
 function boot(): void {

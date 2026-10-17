@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,7 @@ import express, { type Request, type Response } from "express";
 
 import { createCheckoutSession, MemoryCheckoutSessionStore } from "./checkout-session.js";
 import { payPageHtml } from "./pay-html.js";
+import { ProxyCache } from "./proxy-cache.js";
 import { handleProxy } from "./proxy.js";
 import { SettingsStore } from "./settings-store.js";
 import type { MerchantSdk, MerchantSettings } from "./types.js";
@@ -33,6 +34,7 @@ function bearerToken(req: Request): string | null {
 export function createApp(deps: AppDeps): express.Express {
   const app = express();
   const createClient = deps.createClient;
+  const proxyCache = new ProxyCache();
   app.use(express.json({ verify: (req, _res, buf) => {
     (req as Request & { rawBody?: string }).rawBody = buf.toString("utf8");
   } }));
@@ -75,6 +77,8 @@ export function createApp(deps: AppDeps): express.Express {
       baseUri: String(req.body.baseUri ?? "").trim() || null,
       webhookSecret: String(req.body.webhookSecret ?? ""),
     });
+    // Credentials or mode may have changed: cached countries/providers belong to the old account.
+    proxyCache.flush();
     res.redirect("/");
   });
 
@@ -92,6 +96,7 @@ export function createApp(deps: AppDeps): express.Express {
       lockAmount: req.body.lockAmount !== false,
     });
     deps.sessions.save(session);
+    const email = typeof req.body.customerEmail === "string" ? req.body.customerEmail.trim() : "";
     res.json({
       merchantBackendUrl: `${deps.host}/payments`,
       clientToken: session.token,
@@ -100,6 +105,8 @@ export function createApp(deps: AppDeps): express.Express {
       amount: session.amount,
       lockAmount: session.lockAmount,
       reference: session.reference,
+      currency: session.currency,
+      customerEmail: email !== "" ? email : null,
       targetId: "mm-aggr-checkout",
     });
   });
@@ -130,7 +137,13 @@ export function createApp(deps: AppDeps): express.Express {
     const body = req.body !== null && typeof req.body === "object" && !Array.isArray(req.body)
       ? (req.body as Record<string, unknown>)
       : {};
-    const result = await handleProxy(createClient(settings), req.method, route, query, body, session);
+    const scope = createHash("sha256")
+      .update(`${settings.shop}|${settings.clientId}|${settings.baseUri ?? ""}|${settings.test ? "test" : "live"}`)
+      .digest("hex");
+    const result = await handleProxy(createClient(settings), req.method, route, query, body, session, {
+      store: proxyCache,
+      scope,
+    });
     res.status(result.status).json(result.body);
   };
 
@@ -216,6 +229,7 @@ export function createApp(deps: AppDeps): express.Express {
       amount: session.amount,
       lockAmount: true,
       reference: session.reference,
+      currency: session.currency,
       targetId: "mm-aggr-checkout",
     };
     res.type("html").send(payPageHtml(JSON.stringify(config)));

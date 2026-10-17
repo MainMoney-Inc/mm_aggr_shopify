@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createCheckoutSession } from "../src/checkout-session.js";
-import { handleProxy } from "../src/proxy.js";
+import { ProxyCache } from "../src/proxy-cache.js";
+import { handleProxy, idempotencyKey } from "../src/proxy.js";
 import type { MerchantSdk } from "../src/types.js";
 
 function mockClient(overrides: Partial<MerchantSdk> = {}): MerchantSdk {
@@ -68,12 +69,63 @@ describe("handleProxy", () => {
     expect(result.status).toBe(200);
     expect(client.deposits.create).toHaveBeenCalledWith(
       expect.objectContaining({ amount: "12.00", reference: "SH-1" }),
-      "SH-1",
+      idempotencyKey(session),
     );
   });
 
   it("rejects unknown paths", async () => {
     const result = await handleProxy(mockClient(), "GET", "invented", {}, {}, createCheckoutSession({ shop: "x" }));
     expect(result.status).toBe(400);
+  });
+
+  it("derives the idempotency key from the session, not the reference", async () => {
+    const client = mockClient();
+    const session = createCheckoutSession({ shop: "demo.myshopify.com", amount: "12.00", reference: "SH-1", lockAmount: true });
+    const other = createCheckoutSession({ shop: "demo.myshopify.com", amount: "12.00", reference: "SH-1", lockAmount: true });
+    await handleProxy(client, "POST", "deposits", {}, { customer_phone: "1" }, session);
+    await handleProxy(client, "POST", "deposits", {}, { customer_phone: "2", reference: "SH-1-r1" }, session);
+    const calls = vi.mocked(client.deposits.create).mock.calls;
+    expect(calls[0][1]).toBe(idempotencyKey(session));
+    expect(calls[0][1]).not.toBe(session.reference);
+    expect(calls[0][1]).not.toBe(idempotencyKey(other));
+    expect(calls[1][1]).toBe(idempotencyKey(session, 1));
+    expect(calls[1][0]).toMatchObject({ reference: "SH-1-r1" });
+  });
+
+  it("pins the session currency but lets payment_currency through", async () => {
+    const client = mockClient();
+    const session = createCheckoutSession({ shop: "demo.myshopify.com", amount: "12.00", currency: "EUR", lockAmount: true });
+    await handleProxy(client, "POST", "deposits", {}, { currency: "CDF", payment_currency: "CDF" }, session);
+    expect(vi.mocked(client.deposits.create).mock.calls[0][0]).toMatchObject({ currency: "EUR", payment_currency: "CDF" });
+  });
+
+  it("caches static lookups until the cache is flushed, never fee simulations", async () => {
+    const client = mockClient();
+    const session = createCheckoutSession({ shop: "demo.myshopify.com" });
+    const cache = { store: new ProxyCache(), scope: "shop" };
+    await handleProxy(client, "GET", "countries", {}, {}, session, cache);
+    await handleProxy(client, "GET", "countries", {}, {}, session, cache);
+    expect(client.countries.list).toHaveBeenCalledTimes(1);
+    cache.store.flush();
+    await handleProxy(client, "GET", "countries", {}, {}, session, cache);
+    expect(client.countries.list).toHaveBeenCalledTimes(2);
+    await handleProxy(client, "POST", "fees/simulate", {}, { amount: "1" }, session, cache);
+    await handleProxy(client, "POST", "fees/simulate", {}, { amount: "1" }, session, cache);
+    expect(client.fees.simulate).toHaveBeenCalledTimes(2);
+    await handleProxy(client, "GET", "match-provider", { account_number: "1", get_lookup: "true" }, {}, session, cache);
+    await handleProxy(client, "GET", "match-provider", { account_number: "1", get_lookup: "true" }, {}, session, cache);
+    expect(client.customers.matchProvider).toHaveBeenCalledTimes(2);
+  });
+
+  it("expires cached entries after their TTL", async () => {
+    let now = 0;
+    const store = new ProxyCache(() => now);
+    const load = vi.fn(async () => ["x"]);
+    await store.remember("s", "match-provider", { account_number: "1" }, load);
+    await store.remember("s", "match-provider", { account_number: "1" }, load);
+    expect(load).toHaveBeenCalledTimes(1);
+    now = 600_001;
+    await store.remember("s", "match-provider", { account_number: "1" }, load);
+    expect(load).toHaveBeenCalledTimes(2);
   });
 });
