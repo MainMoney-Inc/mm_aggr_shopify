@@ -12,13 +12,13 @@ jobs:
       matrix:
         node: ["22", "24"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           repository: MainMoney-Inc/mm_aggr_nodejs_sdk
           path: ../../sdks/nodejs
           token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: MainMoney-Inc/mm_aggr_js_sdk
           path: ../../sdks/javascript
