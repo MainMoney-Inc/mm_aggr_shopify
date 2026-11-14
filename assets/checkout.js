@@ -44,16 +44,29 @@
     validatePayment: "/deposits/validate",
     payouts: "/payouts"
   };
-  function joinUrl(base, path) {
-    const prefix = base.replace(/\/+$/, "");
-    const suffix = path.startsWith("http://") || path.startsWith("https://") ? path : path.replace(/^\/+/, "/");
-    if (suffix.startsWith("http://") || suffix.startsWith("https://")) {
-      return suffix;
+  function trimSlashes(value, { start = false, end = false } = {}) {
+    let from = 0;
+    let to = value.length;
+    if (start) {
+      while (from < to && value.charCodeAt(from) === 47) from += 1;
     }
-    return `${prefix}${suffix.startsWith("/") ? suffix : `/${suffix}`}`;
+    if (end) {
+      while (to > from && value.charCodeAt(to - 1) === 47) to -= 1;
+    }
+    return value.slice(from, to);
+  }
+  function joinUrl(base, path) {
+    const prefix = trimSlashes(base, { end: true });
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+      return path;
+    }
+    return `${prefix}/${trimSlashes(path, { start: true })}`;
   }
 
   // ../../sdks/javascript/packages/core/src/types.ts
+  function isColorScheme(value) {
+    return value === "light" || value === "dark" || value === "auto";
+  }
   var DEFAULT_THEME = {
     primary: "#ff3366",
     secondary: "#5f5e5e",
@@ -101,7 +114,9 @@
       timeoutMs: options.timeoutMs ?? 3e4,
       locale: options.locale ?? "en",
       messages: options.messages ?? {},
-      theme: { ...DEFAULT_THEME, ...options.theme }
+      theme: { ...DEFAULT_THEME, ...options.theme },
+      currency: options.currency,
+      lockCurrency: options.lockCurrency
     };
   }
 
@@ -155,7 +170,9 @@
     failed: "Payment failed",
     confirming: "Confirming payment",
     polling: "Waiting for confirmation",
-    slow: "Your payment request has been sent. We are waiting for the provider to confirm success or failure. Please keep this page open.",
+    slow: "Your payment is still being processed. You can safely leave this page: we will notify you as soon as the status changes.",
+    lookingUp: "Checking number",
+    connectionLost: "Connection lost. We keep checking and will resume automatically once you are back online.",
     limits: "Amount must be between {min} and {max}",
     required: "This field is required",
     balanceRejected: "Balance validation failed",
@@ -212,7 +229,9 @@
     failed: "Paiement \xE9chou\xE9",
     confirming: "Confirmation du paiement",
     polling: "En attente de confirmation",
-    slow: "Votre demande de paiement a \xE9t\xE9 envoy\xE9e. Nous attendons la confirmation (succ\xE8s ou \xE9chec) de l'op\xE9rateur. Veuillez garder cette page ouverte.",
+    slow: "Votre paiement est toujours en cours de traitement. Vous pouvez quitter cette page sans risque : nous vous informerons d\xE8s que le statut change.",
+    lookingUp: "V\xE9rification du num\xE9ro",
+    connectionLost: "Connexion perdue. Nous continuons de v\xE9rifier et reprendrons automatiquement d\xE8s le retour de la connexion.",
     limits: "Le montant doit \xEAtre compris entre {min} et {max}",
     required: "Ce champ est obligatoire",
     balanceRejected: "Validation du solde \xE9chou\xE9e",
@@ -264,6 +283,9 @@
     element.style.setProperty("--mm-color-secondary", theme.secondary);
     element.style.setProperty("--mm-color-accent", theme.accent);
     element.style.setProperty("--mm-color-background", theme.background);
+  }
+  function applyColorScheme(element, scheme) {
+    element.setAttribute("data-mm-theme", scheme);
   }
 
   // ../../sdks/javascript/packages/http/src/fetch-client.ts
@@ -373,18 +395,36 @@
       throw new ConfigurationException("pollUrl is required when polling is enabled");
     }
     let latest = { status: "PENDING" };
+    let failures = 0;
     while (!options.signal?.aborted) {
       const url = withQuery2(options.pollUrl, { reference: options.reference, operation: options.operation });
-      const response = await options.fetchImpl(url, {
-        method: "GET",
-        headers: { ...options.pollHeaders },
-        signal: options.signal
-      });
-      latest = decodeJson(response.status, await response.text());
-      if (typeof latest.status === "string" && isTerminalStatus(latest.status)) {
+      let delay = options.intervalMs;
+      try {
+        const response = await options.fetchImpl(url, {
+          method: "GET",
+          headers: { ...options.pollHeaders },
+          signal: options.signal
+        });
+        latest = decodeJson(response.status, await response.text());
+        if (failures > 0) {
+          failures = 0;
+          options.onConnectionChange?.(false);
+        }
+        options.onResponse?.(latest);
+      } catch (error) {
+        if (options.signal?.aborted) {
+          throw error;
+        }
+        failures += 1;
+        if (failures === 1) {
+          options.onConnectionChange?.(true);
+        }
+        delay = Math.min(options.intervalMs * 2 ** Math.min(failures, 6), options.maxBackoffMs ?? 1e4);
+      }
+      if (failures === 0 && typeof latest.status === "string" && isTerminalStatus(latest.status)) {
         return latest;
       }
-      await sleep(options.intervalMs, options.signal);
+      await sleep(delay, options.signal);
     }
     return latest;
   }
@@ -458,9 +498,9 @@
     const theme = { ...session.theme, ...options.theme };
     const emitter = new Emitter();
     const pollAbort = new AbortController();
-    const explicitCurrency = options.currency?.trim().toUpperCase() ?? "";
+    const explicitCurrency = (options.currency ?? session.currency)?.trim().toUpperCase() ?? "";
     const fixedCurrency = explicitCurrency !== "";
-    const lockCurrency = options.lockCurrency === true;
+    const lockCurrency = (options.lockCurrency ?? session.lockCurrency) === true;
     const state = {
       step: "country",
       operation: options.operation,
@@ -484,7 +524,11 @@
       customerEmail: options.customerEmail?.trim() ?? "",
       canPay: false,
       slow: false,
-      theme
+      connectionLost: false,
+      pollConfirmed: false,
+      theme,
+      colorScheme: "auto",
+      resolvedColorScheme: "light"
     };
     let lastMatchedIdentifier = "";
     let submissions = 0;
@@ -507,7 +551,7 @@
     const getState = () => ({ ...structuredClone(state), canPay: computeCanPay() });
     const hasValidLocalNumber = () => {
       const digits = e164OrIdentifier().replace(/\D/g, "");
-      const dial = state.selectedCountry?.phone_code?.replace(/\D/g, "") ?? "";
+      const dial = dialPrefix() ? state.selectedCountry?.phone_code?.replace(/\D/g, "") ?? "" : "";
       const national = digits.length - dial.length;
       return national >= MIN_LOCAL_NUMBER_DIGITS && national <= MAX_LOCAL_NUMBER_DIGITS;
     };
@@ -649,6 +693,9 @@
           await refreshLimitsAndFees();
         }
         notify();
+        if (state.identifier.trim() !== "") {
+          await matchProvider();
+        }
       } catch (error) {
         fail(error);
       }
@@ -943,6 +990,8 @@
         }
         state.step = "polling";
         state.slow = false;
+        state.connectionLost = false;
+        state.pollConfirmed = false;
         notify();
         const slowTimer = setTimeout(() => {
           state.slow = true;
@@ -958,12 +1007,23 @@
             reference,
             operation: state.operation,
             intervalMs: options.pollIntervalMs ?? 1e3,
-            signal: pollAbort.signal
+            signal: pollAbort.signal,
+            onConnectionChange: (lost) => {
+              state.connectionLost = lost;
+              notify();
+            },
+            onResponse: () => {
+              if (!state.pollConfirmed) {
+                state.pollConfirmed = true;
+                notify();
+              }
+            }
           });
         } finally {
           clearTimeout(slowTimer);
         }
         state.slow = false;
+        state.connectionLost = false;
         state.status = status;
         state.step = "terminal";
         notify();
@@ -992,15 +1052,54 @@
       }
       return state.partnerFee?.amount ?? options.fees ?? "";
     };
+    const dialPrefix = () => {
+      if (state.activeMethod !== "mobile_money" || state.selectedCountry?.phone_code === void 0) {
+        return false;
+      }
+      return state.selectedProvider === void 0 || isPhoneIdentifier(state.selectedProvider);
+    };
     const e164OrIdentifier = () => {
       const raw = state.identifier.trim();
-      if (!isPhoneIdentifier(state.selectedProvider) || state.selectedCountry?.phone_code === void 0) {
+      if (!dialPrefix() || state.selectedCountry?.phone_code === void 0) {
         return raw;
       }
       return toE164Digits(raw, state.selectedCountry.phone_code);
     };
+    const darkQuery = typeof globalThis.matchMedia === "function" ? globalThis.matchMedia("(prefers-color-scheme: dark)") : void 0;
+    const resolveColorScheme = () => state.colorScheme === "auto" ? darkQuery?.matches === true ? "dark" : "light" : state.colorScheme;
+    const setColorScheme = (scheme) => {
+      if (!isColorScheme(scheme) || state.colorScheme === scheme) {
+        return;
+      }
+      state.colorScheme = scheme;
+      state.resolvedColorScheme = resolveColorScheme();
+      notify();
+    };
+    const onSystemSchemeChange = () => {
+      const resolved = resolveColorScheme();
+      if (state.colorScheme === "auto" && state.resolvedColorScheme !== resolved) {
+        state.resolvedColorScheme = resolved;
+        notify();
+      }
+    };
+    const releases = [];
+    const colorSource = options.colorScheme;
+    if (colorSource !== void 0 && typeof colorSource === "object") {
+      state.colorScheme = isColorScheme(colorSource.get()) ? colorSource.get() : "auto";
+      releases.push(colorSource.subscribe(setColorScheme));
+    } else if (isColorScheme(colorSource)) {
+      state.colorScheme = colorSource;
+    }
+    state.resolvedColorScheme = resolveColorScheme();
+    if (darkQuery !== void 0) {
+      darkQuery.addEventListener("change", onSystemSchemeChange);
+      releases.push(() => darkQuery.removeEventListener("change", onSystemSchemeChange));
+    }
     const close = () => {
       pollAbort.abort();
+      for (const release of releases.splice(0)) {
+        release();
+      }
     };
     return {
       t,
@@ -1013,6 +1112,7 @@
       setCustomerEmail,
       setMethod,
       setLocale,
+      setColorScheme,
       matchProvider,
       setCurrency,
       retry,
@@ -1207,6 +1307,8 @@
     input.addEventListener("input", () => checkout.setCustomerEmail(input.value));
     return floatingField(checkout.t("emailLabel"), input, checkout.t("emailHint"));
   }
+  var LOOKUP_DEBOUNCE_MS = 600;
+  var LOOKUP_MIN_DIGITS = 7;
   function phoneField(checkout, state) {
     const row = document.createElement("div");
     row.className = "mm-phone-row";
@@ -1239,14 +1341,33 @@
     input.autocomplete = "tel-national";
     input.placeholder = "812345678";
     input.value = state.identifier;
+    const lookup = document.createElement("span");
+    lookup.className = "mm-spinner-sm";
+    lookup.setAttribute("role", "status");
+    lookup.setAttribute("aria-label", checkout.t("lookingUp"));
+    lookup.hidden = true;
+    const runLookup = () => {
+      lookup.hidden = false;
+      void checkout.matchProvider().catch(() => void 0).finally(() => {
+        lookup.hidden = true;
+      });
+    };
+    let timer;
     input.addEventListener("input", () => {
       checkout.setIdentifier(input.value);
       refreshPayButton(checkout, input);
+      clearTimeout(timer);
+      if (input.value.replace(/\D/g, "").length >= LOOKUP_MIN_DIGITS) {
+        timer = setTimeout(runLookup, LOOKUP_DEBOUNCE_MS);
+      }
     });
     input.addEventListener("blur", () => {
-      void checkout.matchProvider().catch(() => void 0);
+      clearTimeout(timer);
+      if (input.value.trim() !== "") {
+        runLookup();
+      }
     });
-    row.append(flag, dial, divider, input);
+    row.append(flag, dial, divider, input, lookup);
     return floatingField(checkout.t("phone"), row, checkout.t("phoneHint"));
   }
   function amountField(checkout, state) {
@@ -1310,7 +1431,6 @@
     box.className = "mm-fee-box";
     const q = quote(state);
     const currency = state.fees?.quote?.to_currency ?? state.currency;
-    box.append(feeRow(checkout.t("merchantReceives"), formatMoney(q.receives, state, currency)));
     box.append(feeRow(checkout.t("processingFee"), formatMoney(q.fee, state, currency)));
     const total = feeRow(checkout.t("youPay"), formatMoney(q.pay, state, currency));
     total.classList.add("mm-fee-total");
@@ -1446,6 +1566,21 @@
   }
 
   // ../../sdks/javascript/packages/checkout/src/mount.ts
+  function layoutKey(state) {
+    return JSON.stringify({
+      ...state,
+      colorScheme: void 0,
+      resolvedColorScheme: void 0,
+      identifier: void 0,
+      customerEmail: void 0,
+      amount: void 0,
+      canPay: void 0
+    });
+  }
+  function applyPalette(element, state) {
+    applyColorScheme(element, state.colorScheme);
+    element.setAttribute("data-mm-resolved-theme", state.resolvedColorScheme);
+  }
   function mountCheckout(element, checkout, options = {}) {
     const logoUrl = options.logoUrl ?? DEFAULT_LOGO_URL;
     const useForm = (state) => (options.layout ?? (state.operation === "deposit" ? "form" : "wizard")) === "form";
@@ -1473,7 +1608,38 @@
       }
       element.append(formChrome(checkout, state, logoUrl, options.links ?? {}, body));
     };
+    let renderedKey;
+    let renderedScheme = "";
     const render = (state) => {
+      element.setAttribute("data-mm-variant", options.variant ?? "default");
+      const key = layoutKey(state);
+      const scheme = `${state.colorScheme}/${state.resolvedColorScheme}`;
+      if (key === renderedKey) {
+        if (scheme !== renderedScheme) {
+          applyPalette(element, state);
+          renderedScheme = scheme;
+        }
+        return;
+      }
+      renderedKey = key;
+      renderedScheme = scheme;
+      const fields = Array.from(element.querySelectorAll("input"));
+      const focused = fields.findIndex((field) => field === document.activeElement);
+      const caret = focused >= 0 ? fields[focused].selectionStart : null;
+      renderBody(state);
+      applyPalette(element, state);
+      if (focused >= 0) {
+        const next = element.querySelectorAll("input")[focused];
+        next?.focus();
+        if (caret !== null && caret !== void 0) {
+          try {
+            next?.setSelectionRange(caret, caret);
+          } catch {
+          }
+        }
+      }
+    };
+    const renderBody = (state) => {
       applyTheme(element, state.theme);
       element.classList.add("mm-checkout");
       element.innerHTML = "";
@@ -1555,10 +1721,6 @@
       wrap.append(overviewRow(checkout.t("customerName"), state.customerName));
     }
     wrap.append(overviewRow(checkout.t("amount"), `${state.amount} ${state.currency}`));
-    if (state.fees !== void 0) {
-      wrap.append(overviewRow(checkout.t("fees"), `${state.fees.total_merchant_fee} ${state.currency}`));
-      wrap.append(overviewRow(checkout.t("netAmount"), `${state.fees.net_amount} ${state.currency}`));
-    }
     if (state.partnerFee !== null) {
       wrap.append(
         overviewRow(state.partnerFee.label ?? checkout.t("partnerFee"), `${state.partnerFee.amount} ${state.partnerFee.currency}`)
@@ -1584,6 +1746,13 @@
     const caption = document.createElement("div");
     caption.textContent = state.step === "polling" ? checkout.t("polling") : checkout.t("confirming");
     wrap.append(spinner, caption);
+    if (state.step === "polling" && state.connectionLost) {
+      const lost = document.createElement("div");
+      lost.className = "mm-confirm-slow mm-confirm-offline";
+      lost.setAttribute("role", "status");
+      lost.textContent = checkout.t("connectionLost");
+      wrap.append(lost);
+    }
     if (state.step === "polling" && state.slow) {
       const notice = document.createElement("div");
       notice.className = "mm-confirm-slow";
